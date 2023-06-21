@@ -14,6 +14,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
+import android.app.Activity;
 
 /**
  * This class does all the work for setting up and managing Bluetooth
@@ -116,8 +117,9 @@ public class BluetoothSerialService {
      * Start the ConnectThread to initiate a connection to a remote device.
      * @param device  The BluetoothDevice to connect
      * @param secure Socket Security type - Secure (true) , Insecure (false)
+	 * @param activity The Activity to register receiver for bonding operations
      */
-    public synchronized void connect(BluetoothDevice device, boolean secure) {
+    public synchronized void connect(BluetoothDevice device, boolean secure, Activity activity) {
         if (D) Log.d(TAG, "connect to: " + device);
 
         // Cancel any thread attempting to make a connection
@@ -128,10 +130,146 @@ public class BluetoothSerialService {
         // Cancel any thread currently running a connection
         if (mConnectedThread != null) {mConnectedThread.cancel(); mConnectedThread = null;}
 
-        // Start the thread to connect with the given device
+		switch(device.getBondState()) {
+			case BluetoothDevice.BOND_NONE {
+				startDeviceBond(device, secure, activity);
+				break;
+			}
+			case BluetoothDevice.BOND_BONDING {
+				bondingInProgress();
+				break;
+			}
+			case BluetoothDevice.BOND_BONDED: {
+				startConnectThread(device, secure);
+				break;
+			}
+			default: {
+				unknownBondState();
+			}
+		}
+    }
+
+    /**
+     * Start to bond to the requsted remote BluetoothDevice.
+     * @param device  The BluetoothDevice to bond
+     * @param secure Socket Security type - Secure (true) , Insecure (false)
+	 * @param activity The Activity to register receiver for bonding operations
+     */
+	private void startDeviceBond(BluetoothDevice device, boolean secure, Activity activity) {
+		final BroadcastReceiver bondReceiver = new BroadcastReceiver() {
+			public void onReceive(Context context, Intent intent) {
+				String action = intent.getAction();
+                LOG.d(TAG, "onReceive " + BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+				if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
+					BluetoothDevice bondDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
+					if(device.getAddress().equals(bondDevice.getAddress())) {
+						String lastStatus = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, 0);
+						String status = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, 0);
+						Log.d(TAG, "BluetoothDevice bond state changed: " + decodeBondState(lastStatus) + " -> " + decodeBondState(status));
+						if(lastStatus == BluetoothDevice.BOND_BONDING) {
+							switch(status) {
+								case BluetoothDevice.BOND_BONDED: {
+									startConnectThread(device, secure);
+									activity.unregisterReceiver(this);
+									break;
+								}
+								case BluetoothDevice.BOND_NONE: {
+									bondInterrupted();
+									activity.unregisterReceiver(this);
+									break;
+								}
+							}
+						}
+					}
+				}
+			}
+		};
+
+		activity.registerReceiver(bondReceiver, new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED));
+		if(device.createBond()) {
+			LOG.d(TAG, "startDeviceBond to " + device.getAddress());
+		} else {
+			activity.unregisterReceiver(bondReceiver);
+			bondNotStarted();
+		}
+	}
+	
+	private String decodeBondState(int state) {
+        switch(state) {
+            case BluetoothDevice.BOND_BONDED: return "BOND_BONDED";
+            case BluetoothDevice.BOND_BONDING: return "BOND_BONDING";
+            case BluetoothDevice.BOND_NONE: return "BOND_NONE";
+            default: return "<?>";
+        }
+    }
+
+	/**
+	 * Start the thread to connect with the given device
+	 */
+	private void startConnectThread(BluetoothDevice device, boolean secure) {
         mConnectThread = new ConnectThread(device, secure);
         mConnectThread.start();
         setState(STATE_CONNECTING);
+	}
+
+    /**
+     * Indicate that the current bond request was unable to start and notify the UI Activity.
+     */
+    private void bondNotStarted() {
+        // Send a failure message back to the Activity
+        Message msg = mHandler.obtainMessage(BluetoothSerial.MESSAGE_TOAST);
+        Bundle bundle = new Bundle();
+        bundle.putString(BluetoothSerial.TOAST, "Unable to start device bond request");
+        msg.setData(bundle);
+        mHandler.sendMessage(msg);
+
+        // Start the service over to restart listening mode
+        BluetoothSerialService.this.start();
+    }
+
+    /**
+     * Indicate that the current bond request was interrupted and notify the UI Activity.
+     */
+    private void bondInterrupted() {
+        // Send a failure message back to the Activity
+        Message msg = mHandler.obtainMessage(BluetoothSerial.MESSAGE_TOAST);
+        Bundle bundle = new Bundle();
+        bundle.putString(BluetoothSerial.TOAST, "Bond interrupted");
+        msg.setData(bundle);
+        mHandler.sendMessage(msg);
+
+        // Start the service over to restart listening mode
+        BluetoothSerialService.this.start();
+    }
+
+    /**
+     * Indicate that there is a bonding in progress and notify the UI Activity.
+     */
+    private void bondingInProgress() {
+        // Send a failure message back to the Activity
+        Message msg = mHandler.obtainMessage(BluetoothSerial.MESSAGE_TOAST);
+        Bundle bundle = new Bundle();
+        bundle.putString(BluetoothSerial.TOAST, "Bonding in progress");
+        msg.setData(bundle);
+        mHandler.sendMessage(msg);
+
+        // Start the service over to restart listening mode
+        BluetoothSerialService.this.start();
+    }
+
+    /**
+     * Indicate that there is an unknown bond state and notify the UI Activity.
+     */
+    private void unknownBondState() {
+        // Send a failure message back to the Activity
+        Message msg = mHandler.obtainMessage(BluetoothSerial.MESSAGE_TOAST);
+        Bundle bundle = new Bundle();
+        bundle.putString(BluetoothSerial.TOAST, "Unknown bond status");
+        msg.setData(bundle);
+        mHandler.sendMessage(msg);
+
+        // Start the service over to restart listening mode
+        BluetoothSerialService.this.start();
     }
 
     /**
