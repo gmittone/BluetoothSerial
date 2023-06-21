@@ -15,6 +15,10 @@ import android.os.Handler;
 import android.os.Message;
 import android.util.Log;
 import android.app.Activity;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 
 /**
  * This class does all the work for setting up and managing Bluetooth
@@ -131,11 +135,11 @@ public class BluetoothSerialService {
         if (mConnectedThread != null) {mConnectedThread.cancel(); mConnectedThread = null;}
 
 		switch(device.getBondState()) {
-			case BluetoothDevice.BOND_NONE {
+			case BluetoothDevice.BOND_NONE: {
 				startDeviceBond(device, secure, activity);
 				break;
 			}
-			case BluetoothDevice.BOND_BONDING {
+			case BluetoothDevice.BOND_BONDING: {
 				bondingInProgress();
 				break;
 			}
@@ -159,12 +163,12 @@ public class BluetoothSerialService {
 		final BroadcastReceiver bondReceiver = new BroadcastReceiver() {
 			public void onReceive(Context context, Intent intent) {
 				String action = intent.getAction();
-                LOG.d(TAG, "onReceive " + BluetoothDevice.ACTION_BOND_STATE_CHANGED);
+                Log.d(TAG, "onReceive " + BluetoothDevice.ACTION_BOND_STATE_CHANGED);
 				if (BluetoothDevice.ACTION_BOND_STATE_CHANGED.equals(action)) {
 					BluetoothDevice bondDevice = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
 					if(device.getAddress().equals(bondDevice.getAddress())) {
-						String lastStatus = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, 0);
-						String status = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, 0);
+						final int lastStatus = intent.getIntExtra(BluetoothDevice.EXTRA_PREVIOUS_BOND_STATE, 0);
+						final int status = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, 0);
 						Log.d(TAG, "BluetoothDevice bond state changed: " + decodeBondState(lastStatus) + " -> " + decodeBondState(status));
 						if(lastStatus == BluetoothDevice.BOND_BONDING) {
 							switch(status) {
@@ -187,7 +191,7 @@ public class BluetoothSerialService {
 
 		activity.registerReceiver(bondReceiver, new IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED));
 		if(device.createBond()) {
-			LOG.d(TAG, "startDeviceBond to " + device.getAddress());
+			Log.d(TAG, "startDeviceBond to " + device.getAddress());
 		} else {
 			activity.unregisterReceiver(bondReceiver);
 			bondNotStarted();
